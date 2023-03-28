@@ -6,74 +6,63 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"github.com/aobco/log"
 	"github.com/aobco/nfs/nfs3"
+	"github.com/aobco/nfs/nfs3/rpc"
 	"io"
 	"io/ioutil"
 	"os"
-	"strings"
-
-	"github.com/aobco/log"
-	"github.com/aobco/nfs/nfs3/rpc"
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		log.Infof("%s <host>:<target path> <test directory to be created>", os.Args[0])
-		os.Exit(-1)
-	}
-
-	b := strings.Split(os.Args[1], ":")
-
-	host := b[0]
-	target := b[1]
-	dir := os.Args[2]
-
-	log.Infof("host=%s target=%s dir=%s\n", host, target, dir)
-
+	host := "100.253.50.248"
+	root := "/search01"
+	mkdirName := "test_mkdir"
+	log.Infof("host=%s target=%s dir=%s\n", host, root, mkdirName)
 	mount, err := nfs3.DialMount(host)
 	if err != nil {
 		log.Fatalf("unable to dial MOUNT service: %v", err)
 	}
 	defer mount.Close()
 
-	auth := rpc.NewAuthUnix("hasselhoff", 1001, 1001)
-
-	v, err := mount.Mount(target, auth.Auth())
+	auth := rpc.NewAuthUnix("machine-name", 0, 0)
+	v, err := mount.Mount(root, auth.Auth())
 	if err != nil {
 		log.Fatalf("unable to mount volume: %v", err)
 	}
 	defer v.Close()
 
-	// discover any system files such as lost+found or .snapshot
 	dirs, err := ls(v, ".")
 	if err != nil {
 		log.Fatalf("ls: %s", err.Error())
 	}
 	baseDirCount := len(dirs)
 
-	if _, err = v.Mkdir(dir, 0775); err != nil {
-		log.Fatalf("mkdir error: %v", err)
+	if err := v.RemoveAll(mkdirName); err != nil {
+		log.Fatalf("rmdir %v", err)
 	}
 
-	if _, err = v.Mkdir(dir, 0775); err == nil {
-		log.Fatalf("mkdir expected error")
-	}
-
-	// make a nested dir
-	if _, err = v.Mkdir(dir+"/a", 0775); err != nil {
+	_, err = v.Mkdir(mkdirName, 0775)
+	if err != nil {
 		log.Fatalf("mkdir error: %v", err)
 	}
-
-	// make a nested dir
-	if _, err = v.Mkdir(dir+"/a/b", 0775); err != nil {
+	// make a nested mkdirName
+	//if _, err = v.Mkdir(mkdirName+"/a/b", 0775); err != nil {
+	//	log.Fatalf("mkdir error: %v", err)
+	//}
+	info, fh, err := v.Lookup("/")
+	if err != nil {
 		log.Fatalf("mkdir error: %v", err)
+	}
+	println(info)
+	if err = v.Rename(fh, mkdirName, mkdirName+"_rename"); err != nil {
+		log.Fatalf("rename error: %v", err)
 	}
 
 	dirs, err = ls(v, ".")
 	if err != nil {
 		log.Fatalf("ls: %s", err.Error())
 	}
-
 	// check the length.  There should only be 1 entry in the target (aside from . and .., et al)
 	if len(dirs) != 1+baseDirCount {
 		log.Fatalf("expected %d dirs, got %d", 1+baseDirCount, len(dirs))
@@ -107,7 +96,7 @@ func main() {
 		log.Fatalf("rm(10mb) err: %s", err.Error())
 	}
 
-	_, _, err = v.Lookup(dir)
+	_, _, err = v.Lookup(mkdirName)
 	if err != nil {
 		log.Fatalf("lookup error: %s", err.Error())
 	}
@@ -116,17 +105,17 @@ func main() {
 		log.Fatalf("ls: %s", err.Error())
 	}
 
-	if err = v.RmDir(dir); err == nil {
+	if err = v.RmDir(mkdirName); err == nil {
 		log.Fatalf("expected not empty error")
 	}
 
 	for _, fname := range []string{"/one", "/two", "/a/one", "/a/two", "/a/b/one", "/a/b/two"} {
-		if err = testFileRW(v, dir+fname, 10); err != nil {
+		if err = testFileRW(v, mkdirName+fname, 10); err != nil {
 			log.Fatalf("fail")
 		}
 	}
 
-	if err = v.RemoveAll(dir); err != nil {
+	if err = v.RemoveAll(mkdirName); err != nil {
 		log.Fatalf("error removing files: %s", err.Error())
 	}
 
@@ -210,11 +199,9 @@ func ls(v *nfs3.Target, path string) ([]*nfs3.EntryPlus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("readdir error: %s", err.Error())
 	}
-
 	log.Infof("dirs:")
 	for _, dir := range dirs {
 		log.Infof("\t%s\t%d:%d\t0%o", dir.FileName, dir.Attr.Attr.UID, dir.Attr.Attr.GID, dir.Attr.Attr.Mode)
 	}
-
 	return dirs, nil
 }

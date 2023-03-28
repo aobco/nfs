@@ -747,3 +747,37 @@ func (v *Target) removeAll(deleteDirfh []byte) error {
 
 	return nil
 }
+
+func (v *Target) Rename(fh []byte, fromName string, toName string) error {
+	type RenameArgs struct {
+		rpc.Header
+		From Diropargs3
+		To   Diropargs3
+	}
+
+	_, err := v.call(&RenameArgs{
+		Header: rpc.Header{
+			Rpcvers: 2,
+			Prog:    Nfs3Prog,
+			Vers:    Nfs3Vers,
+			Proc:    NFSProc3Rename,
+			Cred:    v.auth,
+			Verf:    rpc.AuthNull,
+		},
+		From: Diropargs3{
+			FH:       fh,
+			Filename: fromName,
+		},
+		To: Diropargs3{
+			FH:       fh,
+			Filename: toName,
+		},
+	})
+
+	if err != nil {
+		log.Errorf("rename %s to %s fail %s", fromName, toName, err.Error())
+		return err
+	}
+
+	return nil
+}
