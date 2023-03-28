@@ -55,7 +55,7 @@ func main() {
 		log.Fatalf("mkdir error: %v", err)
 	}
 	println(info)
-	if err = v.Rename(fh, mkdirName, mkdirName+"_rename"); err != nil {
+	if err = v.Rename(fh, mkdirName, fh, mkdirName+"_rename"); err != nil {
 		log.Fatalf("rename error: %v", err)
 	}
 

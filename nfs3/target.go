@@ -748,7 +748,7 @@ func (v *Target) removeAll(deleteDirfh []byte) error {
 	return nil
 }
 
-func (v *Target) Rename(fh []byte, fromName string, toName string) error {
+func (v *Target) Rename(fhFrom []byte, fromName string, fhTo []byte, toName string) error {
 	type RenameArgs struct {
 		rpc.Header
 		From Diropargs3
@@ -765,11 +765,11 @@ func (v *Target) Rename(fh []byte, fromName string, toName string) error {
 			Verf:    rpc.AuthNull,
 		},
 		From: Diropargs3{
-			FH:       fh,
+			FH:       fhFrom,
 			Filename: fromName,
 		},
 		To: Diropargs3{
-			FH:       fh,
+			FH:       fhTo,
 			Filename: toName,
 		},
 	})
