@@ -40,7 +40,7 @@ func init() {
 }
 
 // added by zema1
-var DefaultReadTimeout = time.Second * 5
+var DefaultReadTimeout = time.Second * 120
 
 type Client struct {
 	*tcpTransport

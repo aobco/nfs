@@ -128,7 +128,7 @@ func (v *Target) Lookup(p string) (os.FileInfo, []byte, error) {
 			return nil, nil, err
 		}
 
-		//log.Debugf("%s -> 0x%x", dirent, fh)
+		// log.Debugf("%s -> 0x%x", dirent, fh)
 	}
 
 	return fattr, fh, nil
@@ -156,7 +156,7 @@ func (v *Target) lookup2(p string) (*Fattr, []byte, error) {
 			return nil, nil, err
 		}
 
-		//log.Debugf("%s -> 0x%x", dirent, fh)
+		// log.Debugf("%s -> 0x%x", dirent, fh)
 	}
 
 	return fattr, fh, nil
@@ -367,16 +367,16 @@ func (v *Target) setattr(fh []byte, path string, sattr Sattr3, guard Sattrguard3
 }
 
 // ReadDirPlus get dir sub item
-func (v *Target) ReadDirPlus(dir string) ([]*EntryPlus, error) {
+func (v *Target) ReadDirPlus(dir string, n uint32) ([]*EntryPlus, error) {
 	_, fh, err := v.Lookup(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	return v.readDirPlus(fh)
+	return v.readDirPlus(fh, n)
 }
 
-func (v *Target) readDirPlus(fh []byte) ([]*EntryPlus, error) {
+func (v *Target) readDirPlus(fh []byte, n uint32) ([]*EntryPlus, error) {
 	cookie := uint64(0)
 	cookieVerf := uint64(0)
 	eof := false
@@ -399,7 +399,12 @@ func (v *Target) readDirPlus(fh []byte) ([]*EntryPlus, error) {
 		DirAttrs   PostOpAttr
 		CookieVerf uint64
 	}
-
+	count := n
+	if n < 0 {
+		count = 102400
+	} else {
+		count = n
+	}
 	var entries []*EntryPlus
 	for !eof {
 		res, err := v.call(&ReadDirPlus3Args{
@@ -414,8 +419,8 @@ func (v *Target) readDirPlus(fh []byte) ([]*EntryPlus, error) {
 			FH:         fh,
 			Cookie:     cookie,
 			CookieVerf: cookieVerf,
-			DirCount:   512,
-			MaxCount:   4096,
+			DirCount:   count, // 应返回的目录信息字节数
+			MaxCount:   count, // (优先级更高) 会覆盖 dircount 参数的设置。
 		})
 
 		if err != nil {
@@ -455,7 +460,9 @@ func (v *Target) readDirPlus(fh []byte) ([]*EntryPlus, error) {
 			log.Errorf("readdir failed to determine presence of more data to read, aborting")
 			return nil, err
 		}
-
+		if n > 0 {
+			break
+		}
 		log.Debugf("No EOF for dirents so calling back for more")
 		cookieVerf = dirlistOK.CookieVerf
 	}
@@ -712,7 +719,7 @@ func (v *Target) removeAll(deleteDirfh []byte) error {
 	// all files.
 
 	// This is a directory, get all of its Entries
-	entries, err := v.readDirPlus(deleteDirfh)
+	entries, err := v.readDirPlus(deleteDirfh, -1)
 	if err != nil {
 		return err
 	}
