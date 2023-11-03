@@ -15,7 +15,7 @@ import (
 type Target struct {
 	*rpc.Client
 
-	auth    rpc.Auth
+	Auth    rpc.Auth
 	fh      []byte
 	dirPath string
 	fsinfo  *FSInfo
@@ -40,7 +40,7 @@ func NewTarget(addr string, auth rpc.Auth, fh []byte, dirpath string) (*Target, 
 func NewTargetWithClient(client *rpc.Client, auth rpc.Auth, fh []byte, dirpath string) (*Target, error) {
 	vol := &Target{
 		Client:  client,
-		auth:    auth,
+		Auth:    auth,
 		fh:      fh,
 		dirPath: dirpath,
 	}
@@ -87,7 +87,7 @@ func (v *Target) FSInfo() (*FSInfo, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3FSInfo,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		FsRoot: v.fh,
@@ -117,6 +117,7 @@ func (v *Target) Lookup(p string) (os.FileInfo, []byte, error) {
 	// desecend down a path heirarchy to get the last elem's fh
 	dirents := strings.Split(path.Clean(p), "/")
 	for _, dirent := range dirents {
+		log.Debugf("lookup parent %s", dirent)
 		// we're assuming the root is always the root of the mount
 		if dirent == "." || dirent == "" {
 			log.Debugf("root -> 0x%x", fh)
@@ -128,7 +129,7 @@ func (v *Target) Lookup(p string) (os.FileInfo, []byte, error) {
 			return nil, nil, err
 		}
 
-		// log.Debugf("%s -> 0x%x", dirent, fh)
+		log.Debugf("%s -> 0x%x", dirent, fh)
 	}
 
 	return fattr, fh, nil
@@ -181,7 +182,7 @@ func (v *Target) lookup(fh []byte, name string) (*Fattr, []byte, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Lookup,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		What: Diropargs3{
@@ -237,7 +238,7 @@ func (v *Target) access(fh []byte, path string, access uint32) (*Fattr, uint32, 
 		Prog:    Nfs3Prog,
 		Vers:    Nfs3Vers,
 		Proc:    NFSProc3Access,
-		Cred:    v.auth,
+		Cred:    v.Auth,
 		Verf:    rpc.AuthNull,
 	},
 		FH:     fh,
@@ -290,7 +291,7 @@ func (v *Target) getattr(fh []byte, path string) (*Fattr, error) {
 		Prog:    Nfs3Prog,
 		Vers:    Nfs3Vers,
 		Proc:    NFSProc3Getattr,
-		Cred:    v.auth,
+		Cred:    v.Auth,
 		Verf:    rpc.AuthNull,
 	},
 		FH: fh})
@@ -343,7 +344,7 @@ func (v *Target) setattr(fh []byte, path string, sattr Sattr3, guard Sattrguard3
 		Prog:    Nfs3Prog,
 		Vers:    Nfs3Vers,
 		Proc:    NFSProc3Setattr,
-		Cred:    v.auth,
+		Cred:    v.Auth,
 		Verf:    rpc.AuthNull,
 	},
 		FH:    fh,
@@ -367,44 +368,39 @@ func (v *Target) setattr(fh []byte, path string, sattr Sattr3, guard Sattrguard3
 }
 
 // ReadDirPlus get dir sub item
-func (v *Target) ReadDirPlus(dir string, n uint32) ([]*EntryPlus, error) {
+func (v *Target) ReadDirPlus(dir string) ([]*EntryPlus, error) {
 	_, fh, err := v.Lookup(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	return v.readDirPlus(fh, n)
+	return v.readDirPlus(fh)
 }
 
-func (v *Target) readDirPlus(fh []byte, n uint32) ([]*EntryPlus, error) {
+type ReadDirPlus3Args struct {
+	rpc.Header
+	FH         []byte
+	Cookie     uint64
+	CookieVerf uint64
+	DirCount   uint32
+	MaxCount   uint32
+}
+
+type DirListOK struct {
+	DirAttrs   PostOpAttr
+	CookieVerf uint64
+}
+
+type DirListPlus3 struct {
+	IsSet bool      `xdr:"union"`
+	Entry EntryPlus `xdr:"unioncase=1"`
+}
+
+func (v *Target) readDirPlus(fh []byte) ([]*EntryPlus, error) {
 	cookie := uint64(0)
 	cookieVerf := uint64(0)
 	eof := false
 
-	type ReadDirPlus3Args struct {
-		rpc.Header
-		FH         []byte
-		Cookie     uint64
-		CookieVerf uint64
-		DirCount   uint32
-		MaxCount   uint32
-	}
-
-	type DirListPlus3 struct {
-		IsSet bool      `xdr:"union"`
-		Entry EntryPlus `xdr:"unioncase=1"`
-	}
-
-	type DirListOK struct {
-		DirAttrs   PostOpAttr
-		CookieVerf uint64
-	}
-	count := n
-	if n < 0 {
-		count = 102400
-	} else {
-		count = n
-	}
 	var entries []*EntryPlus
 	for !eof {
 		res, err := v.call(&ReadDirPlus3Args{
@@ -413,14 +409,14 @@ func (v *Target) readDirPlus(fh []byte, n uint32) ([]*EntryPlus, error) {
 				Prog:    Nfs3Prog,
 				Vers:    Nfs3Vers,
 				Proc:    NFSProc3ReadDirPlus,
-				Cred:    v.auth,
+				Cred:    v.Auth,
 				Verf:    rpc.AuthNull,
 			},
 			FH:         fh,
 			Cookie:     cookie,
 			CookieVerf: cookieVerf,
-			DirCount:   count, // 应返回的目录信息字节数
-			MaxCount:   count, // (优先级更高) 会覆盖 dircount 参数的设置。
+			DirCount:   10240, // 应返回的目录信息字节数
+			MaxCount:   20480, // (优先级更高) 会覆盖 dircount 参数的设置。
 		})
 
 		if err != nil {
@@ -460,9 +456,6 @@ func (v *Target) readDirPlus(fh []byte, n uint32) ([]*EntryPlus, error) {
 			log.Errorf("readdir failed to determine presence of more data to read, aborting")
 			return nil, err
 		}
-		if n > 0 {
-			break
-		}
 		log.Debugf("No EOF for dirents so calling back for more")
 		cookieVerf = dirlistOK.CookieVerf
 	}
@@ -470,11 +463,54 @@ func (v *Target) readDirPlus(fh []byte, n uint32) ([]*EntryPlus, error) {
 	return entries, nil
 }
 
-// Creates a directory of the given name and returns its handle
+func (v *Target) ReadDirN(request *ReadDirPlus3Args) ([]*EntryPlus, error) {
+	res, err := v.call(request)
+	if err != nil {
+		log.Errorf("step readdir fail %v", err)
+		return nil, err
+	}
+	eof := false
+
+	dirlistOK := new(DirListOK)
+	if err = xdr.Read(res, dirlistOK); err != nil {
+		log.Errorf("readdir failed to parse result: %v", err)
+		log.Debugf("partial dir list: %+v", dirlistOK)
+		return nil, err
+	}
+	var entries []*EntryPlus
+
+	for {
+		var item DirListPlus3
+		if err = xdr.Read(res, &item); err != nil {
+			log.Errorf("readdir failed to parse directory entry, aborting")
+			log.Debugf("partial dirent: %+v", item)
+			return nil, err
+		}
+
+		if !item.IsSet {
+			break
+		}
+
+		request.Cookie = item.Entry.Cookie
+		entries = append(entries, &item.Entry)
+	}
+
+	if err = xdr.Read(res, &eof); err != nil {
+		log.Errorf("readdir failed to determine presence of more data to read, aborting")
+		return nil, err
+	}
+	log.Debugf("No EOF for dirents so calling back for more")
+	request.CookieVerf = dirlistOK.CookieVerf
+	return entries, nil
+}
+
+// Mkdir Creates a directory of the given name and returns its handle
 func (v *Target) Mkdir(path string, perm os.FileMode) ([]byte, error) {
-	dir, newDir := filepath.Split(path)
+	dir := filepath.Dir(path)
+	newDir := filepath.Base(path)
 	_, fh, err := v.Lookup(dir)
 	if err != nil {
+		log.Warnf("lookup %s fail %v", dir, err)
 		return nil, err
 	}
 
@@ -496,7 +532,7 @@ func (v *Target) Mkdir(path string, perm os.FileMode) ([]byte, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Mkdir,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		Where: Diropargs3{
@@ -513,8 +549,7 @@ func (v *Target) Mkdir(path string, perm os.FileMode) ([]byte, error) {
 	res, err := v.call(args)
 
 	if err != nil {
-		log.Debugf("mkdir(%s): %s", path, err.Error())
-		log.Debugf("mkdir args (%+v)", args)
+		log.Warnf("mkdir %s fail %v", path, err)
 		return nil, err
 	}
 
@@ -562,7 +597,7 @@ func (v *Target) Create(path string, perm os.FileMode) ([]byte, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Create,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		Where: Diropargs3{
@@ -617,7 +652,7 @@ func (v *Target) remove(fh []byte, deleteFile string) error {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Remove,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		Object: Diropargs3{
@@ -658,7 +693,7 @@ func (v *Target) rmDir(fh []byte, name string) error {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3RmDir,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		Object: Diropargs3{
@@ -719,7 +754,7 @@ func (v *Target) removeAll(deleteDirfh []byte) error {
 	// all files.
 
 	// This is a directory, get all of its Entries
-	entries, err := v.readDirPlus(deleteDirfh, -1)
+	entries, err := v.readDirPlus(deleteDirfh)
 	if err != nil {
 		return err
 	}
@@ -768,7 +803,7 @@ func (v *Target) Rename(fhFrom []byte, fromName string, fhTo []byte, toName stri
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Rename,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		From: Diropargs3{

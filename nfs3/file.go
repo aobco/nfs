@@ -42,7 +42,7 @@ func (f *File) Readlink() (string, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Readlink,
-			Cred:    f.auth,
+			Cred:    f.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		FH: f.fh,
@@ -91,7 +91,7 @@ func (f *File) Read(p []byte) (int, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Read,
-			Cred:    f.auth,
+			Cred:    f.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		FH:     f.fh,
@@ -153,7 +153,7 @@ func (f *File) Write(p []byte) (int, error) {
 				Prog:    Nfs3Prog,
 				Vers:    Nfs3Vers,
 				Proc:    NFSProc3Write,
-				Cred:    f.auth,
+				Cred:    f.Auth,
 				Verf:    rpc.AuthNull,
 			},
 			FH:       f.fh,
@@ -203,7 +203,7 @@ func (f *File) Close() error {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Commit,
-			Cred:    f.auth,
+			Cred:    f.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		FH: f.fh,
@@ -249,9 +249,12 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 func (v *Target) OpenFile(path string, perm os.FileMode) (*File, error) {
 	_, fh, err := v.Lookup(path)
 	if err != nil {
+		log.Warnf("%v", err)
 		if os.IsNotExist(err) {
+			log.Warnf("create file %s", path)
 			fh, err = v.Create(path, perm)
 			if err != nil {
+				log.Errorf("%v", err)
 				return nil, err
 			}
 		} else {
@@ -317,7 +320,7 @@ func (v *Target) Symlink(where, symlink string) (*File, error) {
 			Prog:    Nfs3Prog,
 			Vers:    Nfs3Vers,
 			Proc:    NFSProc3Symlink,
-			Cred:    v.auth,
+			Cred:    v.Auth,
 			Verf:    rpc.AuthNull,
 		},
 		Where: Diropargs3{

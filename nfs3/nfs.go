@@ -112,12 +112,12 @@ const (
 
 type SetTime struct {
 	SetIt TimeHow  `xdr:"union"`
-	Time  NFS3Time `xdr:"unioncase=2"` //SetToClientTime
+	Time  NFS3Time `xdr:"unioncase=2"` // SetToClientTime
 }
 
 type Sattrguard3 struct {
 	Check int      `xdr:"union"`
-	Time  NFS3Time //SetToClientTime
+	Time  NFS3Time // SetToClientTime
 }
 
 type NFS3Time struct {

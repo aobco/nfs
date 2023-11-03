@@ -34,6 +34,7 @@ type Mount struct {
 	auth    rpc.Auth
 	dirPath string
 	Addr    string
+	Target *Target
 }
 
 func (m *Mount) Unmount() error {
@@ -113,7 +114,7 @@ func (m *Mount) Mount(dirpath string, auth rpc.Auth) (*Target, error) {
 				return nil, err
 			}
 		}
-
+		m.Target = vol
 		return vol, nil
 
 	case MNT3ErrPerm:
