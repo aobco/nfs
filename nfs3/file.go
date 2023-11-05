@@ -181,8 +181,7 @@ func (f *File) Write(p []byte) (int, error) {
 
 		f.curr += uint64(writeres.Count)
 		written += writeres.Count
-
-		log.Debugf("write(%x) len=%d new_offset=%d written=%d total=%d", f.fh, totalToWrite, f.curr, writeres.Count, written)
+		// log.Debugf("write(%x) len=%d new_offset=%d written=%d total=%d", f.fh, totalToWrite, f.curr, writeres.Count, written)
 	}
 
 	return int(written), nil
@@ -247,11 +246,12 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 
 // OpenFile writes to an existing file or creates one
 func (v *Target) OpenFile(path string, perm os.FileMode) (*File, error) {
+	log.Debugf("open file %s", path)
 	_, fh, err := v.Lookup(path)
 	if err != nil {
-		log.Warnf("%v", err)
+		// log.Warnf("open file %s fail %v", path, err)
 		if os.IsNotExist(err) {
-			log.Warnf("create file %s", path)
+			log.Warnf("%s not exists, create it", path)
 			fh, err = v.Create(path, perm)
 			if err != nil {
 				log.Errorf("%v", err)

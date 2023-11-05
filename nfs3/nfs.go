@@ -296,8 +296,7 @@ func dialService(addr string, port int) (*rpc.Client, error) {
 			}
 
 			raddr := fmt.Sprintf("%s:%d", addr, port)
-			log.Debugf("Connecting to %s", raddr)
-
+			// log.Debugf("Connecting to %s", raddr)
 			client, err = rpc.DialTCP("tcp", ldr, raddr)
 			if err == nil {
 				break
@@ -309,12 +308,10 @@ func dialService(addr string, port int) (*rpc.Client, error) {
 
 			return nil, err
 		}
-
-		log.Debugf("using random port %d -> %d", p, port)
+		// log.Debugf("using random port %d -> %d", p, port)
 	} else {
 		raddr := fmt.Sprintf("%s:%d", addr, port)
 		log.Debugf("Connecting to %s from unprivileged port", raddr)
-
 		client, err = rpc.DialTCP("tcp", ldr, raddr)
 		if err != nil {
 			return nil, err

@@ -1,6 +1,7 @@
 package nfs3
 
 import (
+	"github.com/aobco/nfs/nfs3/lru"
 	"io"
 	"os"
 	"path"
@@ -19,6 +20,8 @@ type Target struct {
 	fh      []byte
 	dirPath string
 	fsinfo  *FSInfo
+
+	fhCache *lru.LRUCache
 }
 
 func NewTarget(addr string, auth rpc.Auth, fh []byte, dirpath string) (*Target, error) {
@@ -43,15 +46,18 @@ func NewTargetWithClient(client *rpc.Client, auth rpc.Auth, fh []byte, dirpath s
 		Auth:    auth,
 		fh:      fh,
 		dirPath: dirpath,
+		fhCache: lru.NewLRUCache(10240),
 	}
-
+	vol.fhCache.Add(".", fh)
+	vol.fhCache.Add("", fh)
+	vol.fhCache.Add("/", fh)
 	fsinfo, err := vol.FSInfo()
 	if err != nil {
 		return nil, err
 	}
 
 	vol.fsinfo = fsinfo
-	log.Debugf("%s fsinfo=%#v", dirpath, fsinfo)
+	// log.Debugf("%s fsinfo=%#v", dirpath, fsinfo)
 
 	return vol, nil
 }
@@ -108,63 +114,64 @@ func (v *Target) FSInfo() (*FSInfo, error) {
 
 // Lookup returns attributes and the file handle to a given dirent
 func (v *Target) Lookup(p string) (os.FileInfo, []byte, error) {
-	var (
-		err   error
-		fattr *Fattr
-		fh    = v.fh
-	)
-
-	// desecend down a path heirarchy to get the last elem's fh
-	dirents := strings.Split(path.Clean(p), "/")
-	for _, dirent := range dirents {
-		log.Debugf("lookup parent %s", dirent)
-		// we're assuming the root is always the root of the mount
-		if dirent == "." || dirent == "" {
-			log.Debugf("root -> 0x%x", fh)
-			continue
-		}
-
-		fattr, fh, err = v.lookup(fh, dirent)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		log.Debugf("%s -> 0x%x", dirent, fh)
-	}
-
-	return fattr, fh, nil
+	return v.lookup2(p)
 }
 
 // Lookup returns attributes and the file handle to a given dirent
 func (v *Target) lookup2(p string) (*Fattr, []byte, error) {
+	if pfh, ok := v.fhCache.Get(p); ok {
+		return nil, pfh, nil
+	}
+	p = strings.TrimSuffix(p, "/")
 	var (
 		err   error
 		fattr *Fattr
-		fh    = v.fh
+		fh    []byte = v.fh
 	)
-
-	// desecend down a path heirarchy to get the last elem's fh
-	dirents := strings.Split(path.Clean(p), "/")
-	for _, dirent := range dirents {
-		// we're assuming the root is always the root of the mount
-		if dirent == "." || dirent == "" {
-			log.Debugf("root -> 0x%x", fh)
-			continue
-		}
-
-		fattr, fh, err = v.lookup(fh, dirent)
+	pDir := path.Dir(p)
+	file := path.Base(p)
+	// log.Debugf("LOOKUP path %s pDir %s", p, pDir)
+	if pfh, ok := v.fhCache.Get(pDir); ok {
+		fattr, fh, err = v.lookup(pfh, file)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		// log.Debugf("%s -> 0x%x", dirent, fh)
+		if fattr != nil && fattr.IsDir() {
+			v.fhCache.Add(p, fh)
+		}
+		return fattr, fh, err
 	}
-
+	pfh := v.fh
+	dirents := strings.Split(path.Clean(pDir), "/")
+	for i, dirent := range dirents {
+		join := strings.Join(dirents[:i+1], "/")
+		if cfh, ok := v.fhCache.Get(join); ok {
+			pfh = cfh
+			log.Debugf("LOOKUP path %s join %s cache fh %v", p, join, pfh)
+		} else {
+			_, pfh, err = v.lookup(pfh, dirent)
+			if err != nil {
+				log.Warnf("lookup %s %v", p, err)
+				return nil, nil, err
+			}
+		}
+		// log.Debugf("LOOKUP path %s join %s fh %v", p, join, pfh)
+	}
+	fattr, fh, err = v.lookup(pfh, file)
+	if err != nil {
+		// log.Warnf("lookup %s %v", p, err)
+		return nil, nil, err
+	}
+	if fattr != nil && fattr.IsDir() {
+		v.fhCache.Add(p, fh)
+	}
+	// log.Debugf("lookup path %s fh %v", p, fh)
 	return fattr, fh, nil
 }
 
 // lookup returns the same as above, but by fh and name
 func (v *Target) lookup(fh []byte, name string) (*Fattr, []byte, error) {
+	log.Warnf("lookup %s", name)
 	type Lookup3Args struct {
 		rpc.Header
 		What Diropargs3
@@ -192,18 +199,17 @@ func (v *Target) lookup(fh []byte, name string) (*Fattr, []byte, error) {
 	})
 
 	if err != nil {
-		log.Debugf("lookup(%s): %s", name, err.Error())
+		log.Warnf("lookup %s %s", name, err.Error())
 		return nil, nil, err
 	}
 
 	lookupres := new(LookupOk)
 	if err := xdr.Read(res, lookupres); err != nil {
 		log.Errorf("lookup(%s) failed to parse return: %s", name, err)
-		log.Debugf("lookup partial decode: %+v", *lookupres)
 		return nil, nil, err
 	}
 
-	log.Debugf("lookup(%s): FH 0x%x, attr: %+v", name, lookupres.FH, lookupres.Attr.Attr)
+	// log.Debugf("lookup(%s): FH 0x%x, attr: %+v", name, lookupres.FH, lookupres.Attr.Attr)
 	return &lookupres.Attr.Attr, lookupres.FH, nil
 }
 
@@ -316,7 +322,6 @@ func (v *Target) getattr(fh []byte, path string) (*Fattr, error) {
 
 // Setattr set file attr
 func (v *Target) Setattr(path string, sattr Sattr3) error {
-
 	attr, fh, err := v.lookup2(path)
 	if err != nil {
 		return err
@@ -363,7 +368,6 @@ func (v *Target) setattr(fh []byte, path string, sattr Sattr3, guard Sattrguard3
 		return err
 	}
 	log.Debugf("setattr(%s): FileWcc: %+v", path, setattrres.FileWcc)
-
 	return nil
 }
 
@@ -506,6 +510,9 @@ func (v *Target) ReadDirN(request *ReadDirPlus3Args) ([]*EntryPlus, error) {
 
 // Mkdir Creates a directory of the given name and returns its handle
 func (v *Target) Mkdir(path string, perm os.FileMode) ([]byte, error) {
+	if p, ok := v.fhCache.Get(path); ok {
+		return p, nil
+	}
 	dir := filepath.Dir(path)
 	newDir := filepath.Base(path)
 	_, fh, err := v.Lookup(dir)
@@ -561,6 +568,7 @@ func (v *Target) Mkdir(path string, perm os.FileMode) ([]byte, error) {
 	}
 
 	log.Debugf("mkdir(%s): created successfully (0x%x)", path, fh)
+	v.fhCache.Add(path, mkdirres.FH.FH)
 	return mkdirres.FH.FH, nil
 }
 
@@ -568,7 +576,9 @@ func (v *Target) Mkdir(path string, perm os.FileMode) ([]byte, error) {
 func (v *Target) Create(path string, perm os.FileMode) ([]byte, error) {
 	dir, newFile := filepath.Split(path)
 	_, fh, err := v.Lookup(dir)
-	if err != nil {
+	log.Infof("create %s %x -> %s", dir, fh, newFile)
+	if err != nil && err != os.ErrNotExist {
+		log.Warnf("%v", err)
 		return nil, err
 	}
 

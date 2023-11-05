@@ -35,7 +35,7 @@ const (
 	NFS3ErrBadType     = 10007
 )
 
-var errToName = map[uint32]string{
+var ErrToName = map[uint32]string{
 	0:     "NFS3_OK",
 	1:     "NFS3ERR_PERM",
 	2:     "NFS3ERR_NOENT",
@@ -77,7 +77,7 @@ func NFS3Error(errnum uint32) error {
 	case NFS3ErrNoEnt:
 		return os.ErrNotExist
 	default:
-		if errStr, ok := errToName[errnum]; ok {
+		if errStr, ok := ErrToName[errnum]; ok {
 			return &Error{
 				ErrorNum:    errnum,
 				ErrorString: errStr,
